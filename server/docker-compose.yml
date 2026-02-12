@@ -1,0 +1,154 @@
+version: '3.8'
+
+services:
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: prime-trade-api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - AUTH_SERVICE_URL=http://auth-service:8081
+      - TASK_SERVICE_URL=http://task-service:8082
+      - REDIS_URL=redis:6379
+      - GIN_MODE=release
+      - RATE_LIMIT=100
+      - RATE_LIMIT_WINDOW=60
+    depends_on:
+      - auth-service
+      - task-service
+      - redis
+    networks:
+      - prime-trade-network
+    restart: unless-stopped
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: prime-trade-auth-service
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - DB_HOST=postgres-auth
+      - DB_PORT=5432
+      - DB_USER=auth_user
+      - DB_PASSWORD=auth_secure_password_123
+      - DB_NAME=auth_db
+      - DB_SSLMODE=disable
+      - JWT_SECRET=prime_trade_jwt_secret_key_2024_secure
+      - JWT_EXPIRY=15m
+      - GIN_MODE=release
+      - REDIS_URL=redis:6379
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - prime-trade-network
+    restart: unless-stopped
+
+  # Task Service
+  task-service:
+    build:
+      context: ./task-service
+      dockerfile: Dockerfile
+    container_name: prime-trade-task-service
+    ports:
+      - "8082:8082"
+    environment:
+      - PORT=8082
+      - DB_HOST=postgres-task
+      - DB_PORT=5432
+      - DB_USER=task_user
+      - DB_PASSWORD=task_secure_password_123
+      - DB_NAME=task_db
+      - DB_SSLMODE=disable
+      - AUTH_SERVICE_URL=http://auth-service:8081
+      - GIN_MODE=release
+      - REDIS_URL=redis:6379
+    depends_on:
+      postgres-task:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - prime-trade-network
+    restart: unless-stopped
+
+  # PostgreSQL for Auth Service
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: prime-trade-postgres-auth
+    environment:
+      - POSTGRES_USER=auth_user
+      - POSTGRES_PASSWORD=auth_secure_password_123
+      - POSTGRES_DB=auth_db
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - prime-trade-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # PostgreSQL for Task Service
+  postgres-task:
+    image: postgres:16-alpine
+    container_name: prime-trade-postgres-task
+    environment:
+      - POSTGRES_USER=task_user
+      - POSTGRES_PASSWORD=task_secure_password_123
+      - POSTGRES_DB=task_db
+    volumes:
+      - postgres-task-data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - prime-trade-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U task_user -d task_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for Caching
+  redis:
+    image: redis:7-alpine
+    container_name: prime-trade-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - prime-trade-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  prime-trade-network:
+    driver: bridge
+
+volumes:
+  postgres-auth-data:
+  postgres-task-data:
+  redis-data:
